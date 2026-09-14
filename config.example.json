@@ -1,0 +1,25 @@
+{
+  "routes": [
+    {
+      "id": "home-to-office",
+      "name": "Home to Office (via NH-48)",
+      "origin": "123 Example Street, Bangalore",
+      "destination": "456 Tech Park, Bangalore",
+      "overview_polyline": "<encoded polyline string from Directions API>",
+      "pin_points": [
+        [12.9716, 77.5946],
+        [12.9800, 77.6200],
+        [12.9900, 77.6400]
+      ]
+    }
+  ],
+  "gcs_bucket": "",
+  "csv_filename": "travel_times.csv",
+  "schedule": {
+    "interval_minutes": 30,
+    "active_hours": "7:00-20:00",
+    "max_days": null,
+    "max_sessions": null,
+    "start_aligned": true
+  }
+}
