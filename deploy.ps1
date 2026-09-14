@@ -39,7 +39,8 @@ param(
 
     [string]$Region = "us-central1",
     [string]$BucketName = "",
-    [string]$Schedule = "*/30 * * * *",
+    [string]$Schedule = "",
+    [string]$TimeZone = "",
     [string]$ConfigFile = "config.json"
 )
 
@@ -49,18 +50,43 @@ if (-not $BucketName) {
     $BucketName = "$ProjectId-route-tracker"
 }
 
+# Auto-detect schedule and timezone from config.json if not explicitly provided
+if (Test-Path $ConfigFile) {
+    try {
+        $configData = Get-Content $ConfigFile -Raw | ConvertFrom-Json
+        if ($configData.schedule) {
+            if (-not $Schedule -and $configData.schedule.interval_minutes) {
+                $Schedule = "*/$($configData.schedule.interval_minutes) * * * *"
+            }
+            if (-not $TimeZone -and $configData.schedule.timezone) {
+                $TimeZone = $configData.schedule.timezone
+            }
+        }
+    } catch {
+        # Fall back to defaults
+    }
+}
+
+if (-not $Schedule) {
+    $Schedule = "*/30 * * * *"
+}
+if (-not $TimeZone) {
+    $TimeZone = "Asia/Kolkata"
+}
+
 $FunctionName = "route-tracker"
 $SchedulerJobName = "route-tracker-schedule"
 
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "  Route Tracker — Cloud Deployment" -ForegroundColor Cyan
+Write-Host "  Route Tracker - Cloud Deployment" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  Project:   $ProjectId"
 Write-Host "  Region:    $Region"
 Write-Host "  Bucket:    $BucketName"
 Write-Host "  Schedule:  $Schedule"
+Write-Host "  Timezone:  $TimeZone"
 Write-Host "  Function:  $FunctionName"
 Write-Host ""
 
@@ -70,23 +96,27 @@ gcloud config set project $ProjectId
 
 # ---- Step 2: Create bucket (if it doesn't exist) ----
 Write-Host "[2/5] Creating Cloud Storage bucket..." -ForegroundColor Yellow
-$bucketExists = gsutil ls -b "gs://$BucketName" 2>$null
+$bucketExists = $false
+try {
+    $null = gsutil ls -b "gs://$BucketName" 2>&1
+    $bucketExists = $true
+} catch {
+    $bucketExists = $false
+}
 if (-not $bucketExists) {
     gsutil mb -p $ProjectId -l $Region "gs://$BucketName"
-    Write-Host "  ✓ Bucket created: gs://$BucketName" -ForegroundColor Green
-}
-else {
-    Write-Host "  ✓ Bucket already exists: gs://$BucketName" -ForegroundColor Green
+    Write-Host "  + Bucket created: gs://$BucketName" -ForegroundColor Green
+} else {
+    Write-Host "  + Bucket already exists: gs://$BucketName" -ForegroundColor Green
 }
 
 # ---- Step 3: Upload config ----
 Write-Host "[3/5] Uploading config.json..." -ForegroundColor Yellow
 if (Test-Path $ConfigFile) {
     gsutil cp $ConfigFile "gs://$BucketName/config.json"
-    Write-Host "  ✓ Config uploaded to gs://$BucketName/config.json" -ForegroundColor Green
-}
-else {
-    Write-Host "  ✗ Config file not found: $ConfigFile" -ForegroundColor Red
+    Write-Host "  + Config uploaded to gs://$BucketName/config.json" -ForegroundColor Green
+} else {
+    Write-Host "  X Config file not found: $ConfigFile" -ForegroundColor Red
     Write-Host "    Run 'python setup_route.py' first to create it." -ForegroundColor Red
     exit 1
 }
@@ -107,15 +137,20 @@ gcloud functions deploy $FunctionName `
 
 $FunctionUrl = gcloud functions describe $FunctionName `
     --gen2 --region $Region --format="value(serviceConfig.uri)"
-Write-Host "  ✓ Function deployed: $FunctionUrl" -ForegroundColor Green
+Write-Host "  + Function deployed: $FunctionUrl" -ForegroundColor Green
 
 # ---- Step 5: Create Cloud Scheduler job ----
 Write-Host "[5/5] Creating Cloud Scheduler job..." -ForegroundColor Yellow
 
 # Delete existing job if present (idempotent re-deploys)
-$existingJob = gcloud scheduler jobs list `
-    --location $Region --format="value(name)" `
-    --filter="name~$SchedulerJobName" 2>$null
+$existingJob = $null
+try {
+    $existingJob = gcloud scheduler jobs list `
+        --location $Region --format="value(name)" `
+        --filter="name~$SchedulerJobName" 2>&1
+} catch {
+    $existingJob = $null
+}
 if ($existingJob) {
     gcloud scheduler jobs delete $SchedulerJobName --location $Region --quiet
 }
@@ -125,10 +160,10 @@ gcloud scheduler jobs create http $SchedulerJobName `
     --schedule "$Schedule" `
     --uri $FunctionUrl `
     --http-method GET `
-    --time-zone "UTC" `
+    --time-zone "$TimeZone" `
     --attempt-deadline 120s
 
-Write-Host "  ✓ Scheduler job created: $SchedulerJobName ($Schedule)" -ForegroundColor Green
+Write-Host "  + Scheduler job created: $SchedulerJobName ($Schedule, $TimeZone)" -ForegroundColor Green
 
 # ---- Done ----
 Write-Host ""

@@ -8,10 +8,12 @@ queries current travel times via the Directions API, and logs results to CSV.
 import json
 import os
 
+from datetime import datetime
+
 import functions_framework
 from google.cloud import storage
 
-from tracker import track_all_routes
+from tracker import get_timezone, is_within_active_hours, track_all_routes
 
 
 @functions_framework.http
@@ -19,9 +21,9 @@ def track_routes(request):
     """
     HTTP Cloud Function entry point.
 
-    Triggered by Cloud Scheduler every N minutes.  Reads route configuration
-    from a JSON file in Cloud Storage, queries real-time travel times for each
-    configured route, and appends the results to a CSV file in the same bucket.
+    Triggered by Cloud Scheduler every N minutes. Reads route configuration
+    from a JSON file in Cloud Storage, checks active hours, queries real-time
+    travel times for each configured route, and appends results to CSV in GCS.
 
     Required environment variables:
         GOOGLE_MAPS_API_KEY  — Directions API key.
@@ -50,6 +52,18 @@ def track_routes(request):
 
     # Ensure the bucket is set in the config for GCS logging
     config["gcs_bucket"] = bucket_name
+
+    # Check active hours before querying Maps API
+    sched = config.get("schedule", {})
+    active_hours = sched.get("active_hours")
+    tz_spec = sched.get("timezone", "Asia/Kolkata")
+    tz = get_timezone(tz_spec)
+
+    if active_hours and not is_within_active_hours(active_hours, tz=tz):
+        now_str = datetime.now(tz).strftime("%H:%M")
+        msg = f"Outside active hours ({active_hours} {tz_spec}). Current time: {now_str}. Skipped."
+        print(f"  [SKIPPED] {msg}")
+        return (msg, 200)
 
     # Track all routes and log to CSV
     results = track_all_routes(config, api_key)

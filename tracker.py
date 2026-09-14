@@ -209,11 +209,46 @@ def fetch_alternative_routes(origin: str, destination: str, api_key: str) -> lis
 # ---------------------------------------------------------------------------
 
 
-def build_csv_row(route_config: dict, travel_data: dict) -> dict:
+def get_timezone(tz_spec: str | None = None) -> timezone:
+    """
+    Returns a timezone object.
+    Supports names (e.g. 'Asia/Kolkata', 'UTC'), offsets (e.g. '+05:30'),
+    and falls back gracefully to IST (+05:30) or UTC.
+    """
+    if not tz_spec:
+        tz_spec = os.environ.get("TRACKER_TIMEZONE", "Asia/Kolkata")
+
+    if tz_spec.upper() == "UTC":
+        return timezone.utc
+
+    if tz_spec.startswith(("+", "-")) and ":" in tz_spec:
+        try:
+            sign = 1 if tz_spec[0] == "+" else -1
+            parts = tz_spec[1:].split(":")
+            h, m = int(parts[0]), int(parts[1])
+            return timezone(sign * timedelta(hours=h, minutes=m))
+        except Exception:
+            pass
+
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo(tz_spec)
+    except Exception:
+        pass
+
+    lower = tz_spec.lower()
+    if any(k in lower for k in ("kolkata", "ist", "india", "calcutta")):
+        return timezone(timedelta(hours=5, minutes=30))
+
+    return timezone.utc
+
+
+def build_csv_row(route_config: dict, travel_data: dict, tz: timezone | None = None) -> dict:
     """Builds a CSV row dictionary from route config and API response data."""
-    IST = timezone(timedelta(hours=5, minutes=30))
+    if tz is None:
+        tz = get_timezone()
     return {
-        "timestamp": datetime.now(IST).isoformat(),
+        "timestamp": datetime.now(tz).isoformat(),
         "route_id": route_config["id"],
         "route_name": route_config["name"],
         "origin": route_config["origin"],
@@ -293,6 +328,8 @@ def track_all_routes(
         ``data`` or ``error`` details.
     """
     results: list[dict] = []
+    tz_spec = config.get("schedule", {}).get("timezone") if "schedule" in config else None
+    tz = get_timezone(tz_spec)
 
     for route_cfg in config["routes"]:
         try:
@@ -303,7 +340,7 @@ def track_all_routes(
                 api_key=api_key,
             )
 
-            row = build_csv_row(route_cfg, travel_data)
+            row = build_csv_row(route_cfg, travel_data, tz=tz)
 
             if local_csv_path:
                 append_row_local(local_csv_path, row)
@@ -366,23 +403,23 @@ def parse_active_hours(spec: str) -> tuple[float, float]:
     return _parse(parts[0]), _parse(parts[1])
 
 
-def is_within_active_hours(active_hours: str | None) -> bool:
-    """Returns True if the current local time is within the active window."""
+def is_within_active_hours(active_hours: str | None, tz: timezone | None = None) -> bool:
+    """Returns True if the current time in the specified timezone is within the active window."""
     if not active_hours:
         return True
     start_h, end_h = parse_active_hours(active_hours)
-    now = datetime.now()
+    now = datetime.now(tz) if tz else datetime.now()
     current_h = now.hour + now.minute / 60.0
     return start_h <= current_h < end_h
 
 
-def seconds_until_active(active_hours: str) -> float:
+def seconds_until_active(active_hours: str, tz: timezone | None = None) -> float:
     """
     Returns the number of seconds until the next active-hours window begins.
     If already within the window returns 0.
     """
     start_h, end_h = parse_active_hours(active_hours)
-    now = datetime.now()
+    now = datetime.now(tz) if tz else datetime.now()
     current_h = now.hour + now.minute / 60.0
 
     if start_h <= current_h < end_h:
