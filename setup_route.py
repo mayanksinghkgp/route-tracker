@@ -224,26 +224,38 @@ def main() -> None:
             print("  Aborted.")
             sys.exit(0)
 
+    print("\n--- Route Schedule ---")
+    route_ah = get_input(
+        f"  Active hours for '{route_id}' (e.g. '7:00-13:00' or '17:00-22:00', or leave empty for default)",
+        "",
+    )
+    if route_ah.strip():
+        route_entry["schedule"] = {
+            "active_hours": route_ah.strip(),
+        }
+
     config["routes"].append(route_entry)
 
-    # ---- Schedule Configuration ----
+    # ---- Global Schedule Defaults ----
     # Only prompt if no schedule exists yet (first route setup)
     if "schedule" not in config:
-        print("\n--- Tracking Schedule ---")
-        print("  (These become defaults for 'python tracker.py --local --repeat')")
+        print("\n--- Default Tracking Schedule ---")
+        print("  (Default settings for routes without custom schedule, and for 'tracker.py --repeat')")
 
-        interval = get_input("  Polling interval in minutes", "30")
+        interval = get_input("  Polling interval in minutes", "15")
         try:
             interval = int(interval)
         except ValueError:
-            interval = 30
+            interval = 15
+
+        tz = get_input("  Timezone", "Asia/Kolkata")
 
         active_hours = get_input(
-            "  Active hours (e.g. '7:00-20:00', or leave empty for all day)", ""
+            "  Default active hours (e.g. '7:00-20:00', or leave empty for all day)", ""
         )
 
         max_days_str = get_input(
-            "  Stop after N days (or leave empty for unlimited)", ""
+            "  Stop after N days (or leave empty for unlimited)", "30"
         )
         max_days = int(max_days_str) if max_days_str else None
 
@@ -259,6 +271,7 @@ def main() -> None:
         config["schedule"] = {
             "interval_minutes": interval,
             "active_hours": active_hours or None,
+            "timezone": tz or "Asia/Kolkata",
             "max_days": max_days,
             "max_sessions": max_sessions,
             "start_aligned": start_aligned,
@@ -266,8 +279,9 @@ def main() -> None:
     else:
         sched = config["schedule"]
         ah = sched.get('active_hours', '')
-        print(f"\n  Using existing schedule: every {sched['interval_minutes']} min"
-              f"{f', active {ah}' if ah else ''}")
+        tz = sched.get('timezone', 'Asia/Kolkata')
+        print(f"\n  Using default schedule: every {sched['interval_minutes']} min ({tz})"
+              f"{f', default active: {ah}' if ah else ''}")
 
     # ---- GCS Bucket (optional) ----
     if not config.get("gcs_bucket"):
@@ -282,16 +296,19 @@ def main() -> None:
     # ---- Summary ----
     sched = config.get("schedule", {})
     ah = sched.get('active_hours', '')
+    tz = sched.get('timezone', 'Asia/Kolkata')
     md = sched.get('max_days')
     ms = sched.get('max_sessions')
     print(f"\n{'=' * 60}")
     print("  Setup Complete!")
     print(f"  Routes configured: {len(config['routes'])}")
     for r in config["routes"]:
-        print(f"    - {r['id']}: {r['name']}")
+        r_ah = r.get("schedule", {}).get("active_hours")
+        ah_str = f" (active: {r_ah})" if r_ah else ""
+        print(f"    - {r['id']}: {r['name']}{ah_str}")
     print()
-    print(f"  Schedule: every {sched.get('interval_minutes', 30)} min"
-          f"{f', {ah}' if ah else ', all day'}"
+    print(f"  Default schedule: every {sched.get('interval_minutes', 15)} min ({tz})"
+          f"{f', default active: {ah}' if ah else ''}"
           f"{f', max {md}d' if md else ''}"
           f"{f', max {ms} sessions' if ms else ''}")
     print()

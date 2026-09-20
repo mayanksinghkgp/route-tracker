@@ -308,30 +308,66 @@ def append_row_gcs(bucket_name: str, csv_filename: str, row: dict) -> None:
 # ---------------------------------------------------------------------------
 
 
+def get_effective_route_schedule(route_cfg: dict, global_config: dict) -> dict:
+    """
+    Resolves the effective schedule for a route by combining route-level
+    settings with top-level global schedule defaults.
+    """
+    global_sched = global_config.get("schedule", {})
+    route_sched = route_cfg.get("schedule", {})
+
+    effective = dict(global_sched)
+    effective.update(route_sched)
+    return effective
+
+
 def track_all_routes(
     config: dict,
     api_key: str,
     local_csv_path: str | None = None,
+    check_active_hours: bool = True,
+    active_hours_override: str | None = None,
 ) -> list[dict]:
     """
-    Tracks travel time for every route defined in *config*.
+    Tracks travel time for routes defined in *config*.
+
+    Evaluates active hours per-route (or via active_hours_override).
+    Routes outside their active window are skipped without calling Google Maps API.
 
     Args:
         config: Configuration dictionary containing ``routes`` and storage
             settings (``gcs_bucket``, ``csv_filename``).
         api_key: Google Maps API key.
         local_csv_path: If provided, logs to a local CSV file instead of GCS.
+        check_active_hours: If True, evaluates active hours before querying.
+        active_hours_override: If provided, overrides route-specific active hours.
 
     Returns:
         List of result dictionaries (one per route), each containing
-        ``route_id``, ``status`` (``"ok"`` or ``"error"``), and either
-        ``data`` or ``error`` details.
+        ``route_id``, ``name``, ``status`` (``"ok"``, ``"skipped"``, or ``"error"``),
+        and either ``data``, ``reason``, or ``error`` details.
     """
     results: list[dict] = []
-    tz_spec = config.get("schedule", {}).get("timezone") if "schedule" in config else None
-    tz = get_timezone(tz_spec)
 
     for route_cfg in config["routes"]:
+        sched = get_effective_route_schedule(route_cfg, config)
+        tz = get_timezone(sched.get("timezone"))
+        active_hours = active_hours_override if active_hours_override is not None else sched.get("active_hours")
+
+        if check_active_hours and active_hours and not is_within_active_hours(active_hours, tz=tz):
+            now_str = datetime.now(tz).strftime("%H:%M")
+            tz_name = sched.get("timezone", "local")
+            reason = f"Outside active hours ({active_hours} {tz_name}, now {now_str})"
+            results.append({
+                "route_id": route_cfg["id"],
+                "name": route_cfg["name"],
+                "status": "skipped",
+                "reason": reason,
+                "active_hours": active_hours,
+            })
+            print(f"  [SKIPPED] {route_cfg['name']}: {reason}")
+            continue
+
         try:
             travel_data = fetch_travel_time(
                 origin=route_cfg["origin"],
@@ -351,11 +387,21 @@ def track_all_routes(
                     row,
                 )
 
-            results.append({"route_id": route_cfg["id"], "status": "ok", "data": travel_data})
+            results.append({
+                "route_id": route_cfg["id"],
+                "name": route_cfg["name"],
+                "status": "ok",
+                "data": travel_data,
+            })
             print(f"  [OK] {route_cfg['name']}: {travel_data['duration_in_traffic_text']}")
 
         except Exception as e:
-            results.append({"route_id": route_cfg["id"], "status": "error", "error": str(e)})
+            results.append({
+                "route_id": route_cfg["id"],
+                "name": route_cfg["name"],
+                "status": "error",
+                "error": str(e),
+            })
             print(f"  [FAIL] {route_cfg['name']}: {e}")
 
     return results
@@ -436,6 +482,28 @@ def seconds_until_active(active_hours: str, tz: timezone | None = None) -> float
     return (start_tomorrow - now).total_seconds()
 
 
+def next_active_seconds_for_routes(
+    config: dict,
+    active_hours_override: str | None = None,
+) -> float:
+    """
+    Calculates the number of seconds until the earliest route active window begins.
+    Returns 0.0 if any route is currently active, or if any route has no active_hours.
+    """
+    waits = []
+    for route_cfg in config.get("routes", []):
+        sched = get_effective_route_schedule(route_cfg, config)
+        ah = active_hours_override if active_hours_override is not None else sched.get("active_hours")
+        if not ah:
+            return 0.0  # Runs all day
+        tz = get_timezone(sched.get("timezone"))
+        if is_within_active_hours(ah, tz=tz):
+            return 0.0
+        waits.append(seconds_until_active(ah, tz=tz))
+
+    return min(waits) if waits else 0.0
+
+
 def run_daemon(
     config: dict,
     api_key: str,
@@ -475,7 +543,7 @@ def run_daemon(
     print(f"  Interval:       every {interval_minutes} min")
     print(f"  Max sessions:   {max_sessions or 'unlimited'}")
     print(f"  Max days:       {max_days or 'unlimited'}")
-    print(f"  Active hours:   {active_hours or 'all day'}")
+    print(f"  Active hours:   {active_hours or 'per route / config'}")
     print(f"  CSV file:       {csv_path}")
     print(f"  Press Ctrl+C to stop.\n")
 
@@ -494,19 +562,35 @@ def run_daemon(
                 break
 
             # ---- Check active hours ----
-            if not is_within_active_hours(active_hours):
-                wait = seconds_until_active(active_hours)
-                resume = (datetime.now() + timedelta(seconds=wait)).strftime("%H:%M")
-                print(f"  [{datetime.now().strftime('%H:%M')}] Outside active hours. "
-                      f"Sleeping until {resume}...")
-                time.sleep(wait)
-                continue
+            if active_hours:
+                default_tz = get_timezone(config.get("schedule", {}).get("timezone"))
+                if not is_within_active_hours(active_hours, tz=default_tz):
+                    wait = seconds_until_active(active_hours, tz=default_tz)
+                    resume = (datetime.now() + timedelta(seconds=wait)).strftime("%H:%M")
+                    print(f"  [{datetime.now().strftime('%H:%M')}] Outside active hours ({active_hours}). "
+                          f"Sleeping until {resume}...")
+                    time.sleep(wait)
+                    continue
+            else:
+                wait = next_active_seconds_for_routes(config)
+                if wait > 0:
+                    resume = (datetime.now() + timedelta(seconds=wait)).strftime("%H:%M")
+                    print(f"  [{datetime.now().strftime('%H:%M')}] All routes currently outside active hours. "
+                          f"Sleeping until {resume}...")
+                    time.sleep(wait)
+                    continue
 
             # ---- Poll ----
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             print(f"  [{ts}] Polling ({session_count + 1}"
                   f"{f'/{max_sessions}' if max_sessions else ''})...")
-            track_all_routes(config, api_key, local_csv_path=csv_path)
+            track_all_routes(
+                config,
+                api_key,
+                local_csv_path=csv_path,
+                check_active_hours=True,
+                active_hours_override=active_hours,
+            )
             session_count += 1
 
             # ---- Sleep until next interval ----
@@ -617,7 +701,13 @@ examples:
         type=str,
         default=None,
         metavar="HH:MM-HH:MM",
-        help="Only poll during this daily window (default: from config.json, or all day)",
+        help="Override all routes to poll only during this daily window",
+    )
+    parser.add_argument(
+        "--force",
+        "-f",
+        action="store_true",
+        help="Track all routes immediately, ignoring active-hours restrictions",
     )
 
     args = parser.parse_args()
@@ -643,14 +733,18 @@ examples:
     if args.list_routes:
         print(f"Configured routes ({len(config['routes'])}):")
         for r in config["routes"]:
-            print(f"  {r['id']:20s}  {r['name']}")
+            r_sched = get_effective_route_schedule(r, config)
+            r_ah = r_sched.get("active_hours")
+            schedule_info = f" [active: {r_ah}]" if r_ah else " [active: all day]"
+            print(f"  {r['id']:20s}  {r['name']}{schedule_info}")
         sched = config.get("schedule", {})
         if sched:
             ah = sched.get('active_hours', '')
+            tz = sched.get('timezone', 'Asia/Kolkata')
             md = sched.get('max_days')
             ms = sched.get('max_sessions')
-            print(f"\nSchedule: every {sched.get('interval_minutes', 30)} min"
-                  f"{f', {ah}' if ah else ''}"
+            print(f"\nDefault schedule: every {sched.get('interval_minutes', 30)} min ({tz})"
+                  f"{f', default active: {ah}' if ah else ''}"
                   f"{f', max {md}d' if md else ''}"
                   f"{f', max {ms} sessions' if ms else ''}")
         sys.exit(0)
@@ -675,12 +769,12 @@ examples:
     start_now = args.start_now if args.start_now is not None else not sched.get("start_aligned", True)
     max_sessions = args.max_sessions if args.max_sessions is not None else sched.get("max_sessions")
     max_days = args.max_days if args.max_days is not None else sched.get("max_days")
-    active_hours = args.active_hours if args.active_hours is not None else sched.get("active_hours")
+    active_hours_override = args.active_hours
 
     # ---- Validate active-hours format ----
-    if active_hours:
+    if active_hours_override:
         try:
-            parse_active_hours(active_hours)
+            parse_active_hours(active_hours_override)
         except ValueError as e:
             parser.error(str(e))
 
@@ -707,11 +801,18 @@ examples:
             start_now=start_now,
             max_sessions=max_sessions,
             max_days=max_days,
-            active_hours=active_hours,
+            active_hours=active_hours_override,
         )
     else:
         # Single shot
         print(f"Tracking {len(config['routes'])} route(s)...")
-        results = track_all_routes(config, api_key, local_csv_path=local_path)
+        results = track_all_routes(
+            config,
+            api_key,
+            local_csv_path=local_path,
+            check_active_hours=not args.force,
+            active_hours_override=active_hours_override,
+        )
         ok_count = sum(1 for r in results if r["status"] == "ok")
-        print(f"\nDone: {ok_count}/{len(results)} routes tracked successfully.")
+        skipped_count = sum(1 for r in results if r["status"] == "skipped")
+        print(f"\nDone: {ok_count}/{len(results)} tracked, {skipped_count} skipped.")

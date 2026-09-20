@@ -13,7 +13,7 @@ from datetime import datetime
 import functions_framework
 from google.cloud import storage
 
-from tracker import get_timezone, is_within_active_hours, track_all_routes
+from tracker import track_all_routes
 
 
 @functions_framework.http
@@ -53,27 +53,20 @@ def track_routes(request):
     # Ensure the bucket is set in the config for GCS logging
     config["gcs_bucket"] = bucket_name
 
-    # Check active hours before querying Maps API
-    sched = config.get("schedule", {})
-    active_hours = sched.get("active_hours")
-    tz_spec = sched.get("timezone", "Asia/Kolkata")
-    tz = get_timezone(tz_spec)
-
-    if active_hours and not is_within_active_hours(active_hours, tz=tz):
-        now_str = datetime.now(tz).strftime("%H:%M")
-        msg = f"Outside active hours ({active_hours} {tz_spec}). Current time: {now_str}. Skipped."
-        print(f"  [SKIPPED] {msg}")
-        return (msg, 200)
-
-    # Track all routes and log to CSV
-    results = track_all_routes(config, api_key)
+    # Track all routes (evaluating per-route active hours) and log to CSV
+    results = track_all_routes(config, api_key, check_active_hours=True)
 
     # Build a human-readable response
     lines = []
+    tracked_count = 0
     for r in results:
         if r["status"] == "ok":
             lines.append(f"✓ {r['route_id']}: {r['data']['duration_in_traffic_text']}")
+            tracked_count += 1
+        elif r["status"] == "skipped":
+            lines.append(f"- {r['route_id']}: Skipped ({r.get('reason', 'outside active hours')})")
         else:
-            lines.append(f"✗ {r['route_id']}: {r['error']}")
+            lines.append(f"✗ {r['route_id']}: {r.get('error')}")
 
-    return ("\n".join(lines), 200)
+    status_header = f"[{tracked_count}/{len(results)} routes tracked]"
+    return (f"{status_header}\n" + "\n".join(lines), 200)
