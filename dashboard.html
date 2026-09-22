@@ -1,0 +1,1431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#1a1a2e">
+<meta name="description" content="Route Travel Time Tracker — View tracked commute times on your phone">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Route Tracker</title>
+
+<!-- PWA Manifest (inline via data URI) -->
+<link rel="manifest" href="data:application/json;charset=utf-8,%7B%22name%22%3A%22Route%20Tracker%22%2C%22short_name%22%3A%22Routes%22%2C%22start_url%22%3A%22.%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%231a1a2e%22%2C%22theme_color%22%3A%22%231a1a2e%22%2C%22description%22%3A%22Track%20and%20visualize%20commute%20travel%20times%22%2C%22icons%22%3A%5B%5D%7D">
+
+<!-- Google Fonts: Inter -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<!-- Apache ECharts -->
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+
+<style>
+/* ================================================================
+   Design Tokens
+   ================================================================ */
+:root {
+  --bg-primary: #1a1a2e;
+  --bg-secondary: #16213e;
+  --bg-card: rgba(22, 33, 62, 0.7);
+  --bg-card-hover: rgba(22, 33, 62, 0.9);
+  --border-card: rgba(233, 69, 96, 0.15);
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --text-primary: #e8e8ef;
+  --text-secondary: #8b8fa3;
+  --text-muted: #5a5e72;
+  --accent: #e94560;
+  --accent-glow: rgba(233, 69, 96, 0.25);
+  --accent-secondary: #0f3460;
+  --gradient-accent: linear-gradient(135deg, #0f3460 0%, #e94560 100%);
+  --gradient-card: linear-gradient(135deg, rgba(15, 52, 96, 0.4) 0%, rgba(233, 69, 96, 0.08) 100%);
+  --success: #4ade80;
+  --warning: #fbbf24;
+  --radius: 14px;
+  --radius-sm: 8px;
+  --radius-pill: 50px;
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.4);
+  --shadow-glow: 0 0 20px var(--accent-glow);
+  --transition: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+/* ================================================================
+   Reset & Base
+   ================================================================ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html {
+  font-size: 15px;
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: var(--font);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  min-height: 100vh;
+  min-height: 100dvh;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Animated background gradient */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 60% 50% at 20% 10%, rgba(15, 52, 96, 0.5) 0%, transparent 60%),
+    radial-gradient(ellipse 50% 40% at 80% 90%, rgba(233, 69, 96, 0.12) 0%, transparent 60%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ================================================================
+   Layout Shell
+   ================================================================ */
+.app {
+  position: relative;
+  z-index: 1;
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 0 16px 40px;
+}
+
+/* ================================================================
+   Header
+   ================================================================ */
+.header {
+  padding: 20px 0 12px;
+  animation: fadeSlideDown 0.5s ease-out;
+}
+
+.header__title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  background: var(--gradient-accent);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  letter-spacing: -0.02em;
+}
+
+.header__subtitle {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+/* ================================================================
+   Route Selector Pills
+   ================================================================ */
+.route-selector {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 12px 0;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  animation: fadeSlideDown 0.5s ease-out 0.1s both;
+}
+.route-selector::-webkit-scrollbar { display: none; }
+
+.route-pill {
+  flex-shrink: 0;
+  padding: 8px 18px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-card);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: var(--text-secondary);
+  font-family: var(--font);
+  font-size: 0.82rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition);
+  white-space: nowrap;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.route-pill:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.route-pill.active {
+  background: var(--gradient-accent);
+  border-color: transparent;
+  color: #fff;
+  box-shadow: var(--shadow-glow);
+}
+
+/* ================================================================
+   KPI Cards
+   ================================================================ */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  padding: 8px 0 16px;
+  animation: fadeSlideUp 0.5s ease-out 0.2s both;
+}
+
+.kpi-card {
+  background: var(--gradient-card);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius);
+  padding: 14px 12px;
+  text-align: center;
+  transition: all var(--transition);
+}
+
+.kpi-card:hover {
+  border-color: rgba(233, 69, 96, 0.35);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-glow);
+}
+
+.kpi-card__icon {
+  font-size: 1.2rem;
+  margin-bottom: 4px;
+}
+
+.kpi-card__value {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+
+.kpi-card__label {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  margin-top: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* ================================================================
+   Chart Container
+   ================================================================ */
+.chart-section {
+  animation: fadeSlideUp 0.5s ease-out 0.3s both;
+}
+
+.chart-container {
+  background: var(--bg-card);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius);
+  padding: 16px 8px 8px;
+  margin-bottom: 16px;
+  box-shadow: var(--shadow-lg);
+}
+
+.chart-container__title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  padding: 0 8px 10px;
+}
+
+#main-chart {
+  width: 100%;
+  height: 320px;
+}
+
+/* ================================================================
+   Chart Type Toggle
+   ================================================================ */
+.chart-toggle {
+  display: flex;
+  gap: 4px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 3px;
+  margin-bottom: 12px;
+  align-self: flex-start;
+}
+
+.chart-toggle-btn {
+  padding: 6px 16px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font);
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition);
+  white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.chart-toggle-btn:hover { color: var(--text-primary); }
+
+.chart-toggle-btn.active {
+  background: var(--gradient-accent);
+  color: #fff;
+  box-shadow: 0 0 12px var(--accent-glow);
+}
+
+/* ================================================================
+   Filters Toolbar
+   ================================================================ */
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 0 12px;
+  animation: fadeSlideUp 0.5s ease-out 0.35s both;
+}
+
+.filter-group {
+  display: flex;
+  gap: 4px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 3px;
+}
+
+.filter-btn {
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font);
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition);
+  white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.filter-btn:hover { color: var(--text-primary); }
+
+.filter-btn.active {
+  background: var(--accent-secondary);
+  color: #fff;
+}
+
+/* ================================================================
+   Advanced Filters Panel
+   ================================================================ */
+.advanced-section {
+  animation: fadeSlideUp 0.5s ease-out 0.38s both;
+  margin-bottom: 16px;
+}
+
+.advanced-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 10px 16px;
+  background: var(--bg-card);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  font-family: var(--font);
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.advanced-toggle:hover {
+  border-color: rgba(233, 69, 96, 0.25);
+  color: var(--text-secondary);
+}
+
+.advanced-toggle__arrow {
+  transition: transform var(--transition);
+  font-size: 0.6rem;
+  margin-left: auto;
+}
+
+.advanced-toggle.open .advanced-toggle__arrow {
+  transform: rotate(180deg);
+}
+
+.advanced-toggle.open {
+  border-radius: var(--radius) var(--radius) 0 0;
+  border-bottom-color: transparent;
+}
+
+.advanced-panel {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.advanced-panel.open {
+  max-height: 300px;
+}
+
+.advanced-panel__inner {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-top: none;
+  border-radius: 0 0 var(--radius) var(--radius);
+  padding: 14px 16px 16px;
+}
+
+.advanced-panel__label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 8px;
+}
+
+.advanced-panel__label:not(:first-child) {
+  margin-top: 14px;
+}
+
+/* Date range inputs */
+.date-range-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.date-input {
+  flex: 1;
+  padding: 7px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font);
+  font-size: 0.75rem;
+  transition: border-color var(--transition);
+  -webkit-appearance: none;
+}
+
+.date-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.date-range-row span {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.date-apply-btn {
+  padding: 7px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--accent);
+  background: transparent;
+  color: var(--accent);
+  font-family: var(--font);
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition);
+  -webkit-tap-highlight-color: transparent;
+  flex-shrink: 0;
+}
+
+.date-apply-btn:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* Day-of-week checkboxes */
+.dow-grid {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.dow-chip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 32px;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font);
+  font-size: 0.7rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition);
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+.dow-chip:hover {
+  border-color: var(--accent);
+  color: var(--text-secondary);
+}
+
+.dow-chip.active {
+  background: var(--accent-secondary);
+  border-color: rgba(15, 52, 96, 0.8);
+  color: #fff;
+}
+
+/* ================================================================
+   Data Table (Collapsible)
+   ================================================================ */
+.data-table-section {
+  animation: fadeSlideUp 0.5s ease-out 0.4s both;
+}
+
+.table-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 12px 16px;
+  background: var(--bg-card);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius);
+  color: var(--text-secondary);
+  font-family: var(--font);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.table-toggle:hover {
+  border-color: rgba(233, 69, 96, 0.35);
+  color: var(--text-primary);
+}
+
+.table-toggle__arrow {
+  transition: transform var(--transition);
+  font-size: 0.7rem;
+}
+
+.table-toggle.open .table-toggle__arrow {
+  transform: rotate(180deg);
+}
+
+.table-toggle.open {
+  border-radius: var(--radius) var(--radius) 0 0;
+  border-bottom: none;
+}
+
+.data-table-wrapper {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.data-table-wrapper.open {
+  max-height: 400px;
+}
+
+.data-table-scroll {
+  background: var(--bg-card);
+  border: 1px solid var(--border-card);
+  border-top: none;
+  border-radius: 0 0 var(--radius) var(--radius);
+  overflow-y: auto;
+  max-height: 400px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.72rem;
+}
+
+.data-table th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 10px 12px;
+  text-align: left;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.data-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.data-table tr:hover td {
+  color: var(--text-primary);
+  background: rgba(233, 69, 96, 0.04);
+}
+
+/* ================================================================
+   Loading & Empty States
+   ================================================================ */
+.loading-state, .empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  text-align: center;
+}
+
+.spinner {
+  width: 36px;
+  height: 36px;
+  border: 3px solid var(--border-subtle);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.loading-state__text, .empty-state__text {
+  margin-top: 16px;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.empty-state__icon {
+  font-size: 2.5rem;
+  margin-bottom: 4px;
+}
+
+/* ================================================================
+   Animations
+   ================================================================ */
+@keyframes fadeSlideDown {
+  from { opacity: 0; transform: translateY(-12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeSlideUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ================================================================
+   Desktop stretch
+   ================================================================ */
+@media (min-width: 700px) {
+  .app { padding: 0 24px 60px; }
+  #main-chart { height: 400px; }
+  .kpi-card { padding: 18px 16px; }
+  .kpi-card__value { font-size: 1.4rem; }
+}
+</style>
+</head>
+<body>
+
+<div class="app" id="app">
+
+  <!-- Header -->
+  <header class="header">
+    <h1 class="header__title">Route Tracker</h1>
+    <p class="header__subtitle" id="last-updated">Loading data…</p>
+  </header>
+
+  <!-- Route Selector -->
+  <nav class="route-selector" id="route-selector">
+    <!-- Pills injected by JS -->
+  </nav>
+
+  <!-- KPI Cards -->
+  <section class="kpi-grid" id="kpi-grid">
+    <div class="kpi-card">
+      <div class="kpi-card__icon">🕐</div>
+      <div class="kpi-card__value" id="kpi-fastest">—</div>
+      <div class="kpi-card__label">Best Window</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-card__icon">📊</div>
+      <div class="kpi-card__value" id="kpi-avg">—</div>
+      <div class="kpi-card__label">Avg Duration</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-card__icon">📈</div>
+      <div class="kpi-card__value" id="kpi-delay">—</div>
+      <div class="kpi-card__label">Max Delay</div>
+    </div>
+  </section>
+
+  <!-- Chart -->
+  <section class="chart-section">
+    <!-- Chart type toggle -->
+    <div class="chart-toggle" id="chart-toggle">
+      <button class="chart-toggle-btn active" data-chart="lines">📈 Daily Lines</button>
+      <button class="chart-toggle-btn" data-chart="boxplot">📦 Box & Whisker</button>
+    </div>
+    <div class="chart-container">
+      <div class="chart-container__title" id="chart-title">Travel Time by Hour of Day</div>
+      <div id="main-chart"></div>
+    </div>
+  </section>
+
+  <!-- Filters -->
+  <section class="filters" id="filters-section">
+    <div class="filter-group" id="filter-days">
+      <button class="filter-btn" data-days="7">7 Days</button>
+      <button class="filter-btn active" data-days="30">30 Days</button>
+      <button class="filter-btn" data-days="0">All</button>
+    </div>
+    <div class="filter-group" id="filter-daytype">
+      <button class="filter-btn active" data-daytype="all">All</button>
+      <button class="filter-btn" data-daytype="weekday">Weekdays</button>
+      <button class="filter-btn" data-daytype="weekend">Weekends</button>
+    </div>
+  </section>
+
+  <!-- Advanced Filters -->
+  <section class="advanced-section">
+    <button class="advanced-toggle" id="advanced-toggle" type="button">
+      <span>⚙️</span>
+      <span>Advanced Filters</span>
+      <span class="advanced-toggle__arrow">▼</span>
+    </button>
+    <div class="advanced-panel" id="advanced-panel">
+      <div class="advanced-panel__inner">
+        <div class="advanced-panel__label">Custom Date Range</div>
+        <div class="date-range-row">
+          <input type="date" class="date-input" id="date-from" />
+          <span>to</span>
+          <input type="date" class="date-input" id="date-to" />
+          <button class="date-apply-btn" id="date-apply-btn">Apply</button>
+        </div>
+
+        <div class="advanced-panel__label">Days of Week</div>
+        <div class="dow-grid" id="dow-grid">
+          <button class="dow-chip" data-dow="1">Mon</button>
+          <button class="dow-chip active" data-dow="2">Tue</button>
+          <button class="dow-chip active" data-dow="3">Wed</button>
+          <button class="dow-chip active" data-dow="4">Thu</button>
+          <button class="dow-chip" data-dow="5">Fri</button>
+          <button class="dow-chip" data-dow="6">Sat</button>
+          <button class="dow-chip" data-dow="7">Sun</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Data Table -->
+  <section class="data-table-section">
+    <button class="table-toggle" id="table-toggle" type="button">
+      <span>Recent Data Points</span>
+      <span class="table-toggle__arrow">▼</span>
+    </button>
+    <div class="data-table-wrapper" id="table-wrapper">
+      <div class="data-table-scroll">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Duration</th>
+              <th>Traffic</th>
+              <th>Distance</th>
+            </tr>
+          </thead>
+          <tbody id="table-body">
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<script>
+/* =================================================================
+   State
+   ================================================================= */
+let allData = [];         // Full dataset from API
+let routes = [];          // Route metadata
+let activeRouteId = null;
+let filterDays = 30;      // 0 = all
+let filterDayType = 'all'; // all | weekday | weekend | custom
+let chartType = 'lines';  // lines | boxplot
+let customDateFrom = null; // Date string YYYY-MM-DD or null
+let customDateTo = null;
+let customDaysOfWeek = new Set([2, 3, 4]); // 1=Mon..7=Sun, default Tue/Wed/Thu
+
+/* =================================================================
+   API Helpers
+   ================================================================= */
+
+// Resolve API base — works both when served from the Cloud Function
+// and when testing locally from a file
+function apiBase() {
+  const loc = window.location;
+  // If served from the Cloud Function, API is at the same origin
+  if (loc.protocol.startsWith('http')) {
+    return loc.origin + loc.pathname.replace(/\/+$/, '');
+  }
+  // Fallback for local file testing
+  return 'http://localhost:8080';
+}
+
+// Append access key to URL if present in the page URL's query string
+function withKey(url) {
+  const params = new URLSearchParams(window.location.search);
+  const key = params.get('key');
+  if (key) {
+    const sep = url.includes('?') ? '&' : '?';
+    return url + sep + 'key=' + encodeURIComponent(key);
+  }
+  return url;
+}
+
+async function fetchRoutes() {
+  const resp = await fetch(withKey(apiBase() + '/api/routes'));
+  if (!resp.ok) throw new Error('Failed to fetch routes');
+  return resp.json();
+}
+
+async function fetchData(routeId, days) {
+  let url = apiBase() + '/api/data?route_id=' + encodeURIComponent(routeId);
+  if (days && days > 0) url += '&days=' + days;
+  const resp = await fetch(withKey(url));
+  if (!resp.ok) throw new Error('Failed to fetch data');
+  return resp.json();
+}
+
+/* =================================================================
+   Rendering: Route Pills
+   ================================================================= */
+function renderPills() {
+  const container = document.getElementById('route-selector');
+  container.innerHTML = '';
+  routes.forEach(r => {
+    const btn = document.createElement('button');
+    btn.className = 'route-pill' + (r.id === activeRouteId ? ' active' : '');
+    btn.textContent = r.name;
+    btn.setAttribute('data-route', r.id);
+    btn.addEventListener('click', () => selectRoute(r.id));
+    container.appendChild(btn);
+  });
+}
+
+/* =================================================================
+   Rendering: KPI Cards
+   ================================================================= */
+function computeKPIs(data) {
+  if (!data.length) return { fastest: '—', avg: '—', delay: '—' };
+
+  const minutes = data.map(d => d.travel_minutes).filter(v => v != null);
+  if (!minutes.length) return { fastest: '—', avg: '—', delay: '—' };
+
+  // Average
+  const avg = minutes.reduce((a, b) => a + b, 0) / minutes.length;
+
+  // Fastest 1-hour window
+  // Group by hour bucket and find the one with lowest average
+  const byHour = {};
+  data.forEach(d => {
+    if (d.travel_minutes == null) return;
+    const bucket = Math.floor(d.hour_decimal);
+    if (!byHour[bucket]) byHour[bucket] = [];
+    byHour[bucket].push(d.travel_minutes);
+  });
+  let bestHour = null;
+  let bestAvg = Infinity;
+  for (const [h, vals] of Object.entries(byHour)) {
+    const hAvg = vals.reduce((a, b) => a + b, 0) / vals.length;
+    if (hAvg < bestAvg) { bestAvg = hAvg; bestHour = parseInt(h); }
+  }
+  const fastestStr = bestHour != null
+    ? `${String(bestHour).padStart(2, '0')}:00`
+    : '—';
+
+  // Max delay: worst (traffic / baseline) ratio
+  let maxRatio = 0;
+  data.forEach(d => {
+    if (d.travel_minutes != null && d.baseline_minutes != null && d.baseline_minutes > 0) {
+      const ratio = d.travel_minutes / d.baseline_minutes;
+      if (ratio > maxRatio) maxRatio = ratio;
+    }
+  });
+  const delayStr = maxRatio > 0 ? `${Math.round((maxRatio - 1) * 100)}%` : '—';
+
+  return {
+    fastest: fastestStr,
+    avg: `${avg.toFixed(1)}m`,
+    delay: maxRatio > 0 ? `+${delayStr}` : '—',
+  };
+}
+
+function renderKPIs(data) {
+  const kpis = computeKPIs(data);
+  document.getElementById('kpi-fastest').textContent = kpis.fastest;
+  document.getElementById('kpi-avg').textContent = kpis.avg;
+  document.getElementById('kpi-delay').textContent = kpis.delay;
+}
+
+/* =================================================================
+   Rendering: ECharts
+   ================================================================= */
+let chart = null;
+
+// Color palette: curated for dark backgrounds
+const PALETTE = [
+  '#e94560', '#4fc3f7', '#81c784', '#ffb74d', '#ba68c8',
+  '#4dd0e1', '#f06292', '#aed581', '#ffd54f', '#7986cb',
+  '#ff8a65', '#a1887f', '#90a4ae', '#dce775', '#64b5f6',
+];
+
+function renderChart(data) {
+  if (chartType === 'boxplot') {
+    renderBoxPlot(data);
+  } else {
+    renderLinesChart(data);
+  }
+}
+
+/* =================================================================
+   Chart: Daily Lines (Scatter + Line per day)
+   ================================================================= */
+function renderLinesChart(data) {
+  const el = document.getElementById('main-chart');
+  if (!chart) {
+    chart = echarts.init(el, null, { renderer: 'canvas' });
+    window.addEventListener('resize', () => chart.resize());
+  }
+
+  if (!data.length) {
+    chart.clear();
+    chart.setOption({ title: { text: 'No data', left: 'center', top: 'center', textStyle: { color: '#5a5e72', fontSize: 14 } } });
+    return;
+  }
+
+  // Group by date
+  const byDate = {};
+  data.forEach(d => {
+    if (d.travel_minutes == null) return;
+    if (!byDate[d.date]) byDate[d.date] = [];
+    byDate[d.date].push(d);
+  });
+
+  const datesSorted = Object.keys(byDate).sort();
+
+  // Build series
+  const series = datesSorted.map((dateStr, i) => {
+    const pts = byDate[dateStr]
+      .map(d => [d.hour_decimal, d.travel_minutes, d.timestamp, d.duration_in_traffic_text])
+      .sort((a, b) => a[0] - b[0]);
+
+    const dt = new Date(dateStr + 'T00:00:00');
+    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const label = `${dayNames[dt.getDay()]} ${dt.getDate()} ${monthNames[dt.getMonth()]}`;
+
+    const color = PALETTE[i % PALETTE.length];
+
+    return [
+      {
+        name: label,
+        type: 'scatter',
+        data: pts,
+        symbolSize: 8,
+        itemStyle: { color, borderColor: 'rgba(255,255,255,0.5)', borderWidth: 1 },
+        emphasis: { itemStyle: { borderWidth: 2, shadowBlur: 10, shadowColor: color } },
+      },
+      {
+        name: label,
+        type: 'line',
+        data: pts,
+        showSymbol: false,
+        lineStyle: { color, width: 1.5, opacity: 0.4 },
+        silent: true,
+      }
+    ];
+  }).flat();
+
+  const allHours = data.filter(d => d.travel_minutes != null).map(d => d.hour_decimal);
+  const minHour = Math.floor(Math.min(...allHours));
+  const maxHour = Math.ceil(Math.max(...allHours));
+
+  const option = {
+    backgroundColor: 'transparent',
+    tooltip: {
+      trigger: 'item',
+      backgroundColor: 'rgba(26, 26, 46, 0.95)',
+      borderColor: 'rgba(233, 69, 96, 0.3)',
+      borderWidth: 1,
+      textStyle: { color: '#e8e8ef', fontFamily: 'Inter, sans-serif', fontSize: 12 },
+      formatter: function(params) {
+        if (!params.data || params.data.length < 4) return '';
+        const hour = params.data[0];
+        const mins = params.data[1];
+        const text = params.data[3];
+        const hh = Math.floor(hour);
+        const mm = Math.round((hour - hh) * 60);
+        return `<strong>${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}</strong><br/>` +
+               `Duration: <strong>${text || mins.toFixed(1) + ' min'}</strong><br/>` +
+               `<span style="color:#8b8fa3;font-size:11px">${params.seriesName}</span>`;
+      },
+    },
+    legend: {
+      type: 'scroll',
+      bottom: 0,
+      left: 'center',
+      textStyle: { color: '#8b8fa3', fontSize: 10, fontFamily: 'Inter, sans-serif' },
+      pageTextStyle: { color: '#8b8fa3' },
+      pageIconColor: '#e94560',
+      pageIconInactiveColor: '#5a5e72',
+      itemWidth: 12,
+      itemHeight: 8,
+    },
+    grid: {
+      left: 44,
+      right: 16,
+      top: 16,
+      bottom: datesSorted.length > 5 ? 52 : 36,
+      containLabel: false,
+    },
+    xAxis: {
+      type: 'value',
+      min: minHour,
+      max: maxHour,
+      interval: 1,
+      axisLabel: {
+        formatter: val => `${Math.floor(val)}:00`,
+        color: '#5a5e72',
+        fontSize: 10,
+        fontFamily: 'Inter, sans-serif',
+      },
+      axisLine: { lineStyle: { color: 'rgba(255,255,255,0.06)' } },
+      splitLine: { lineStyle: { color: 'rgba(255,255,255,0.04)' } },
+      axisTick: { show: false },
+    },
+    yAxis: {
+      type: 'value',
+      name: 'min',
+      nameTextStyle: { color: '#5a5e72', fontSize: 10, fontFamily: 'Inter, sans-serif', padding: [0, 0, 0, -20] },
+      axisLabel: { color: '#5a5e72', fontSize: 10, fontFamily: 'Inter, sans-serif' },
+      axisLine: { show: false },
+      splitLine: { lineStyle: { color: 'rgba(255,255,255,0.04)' } },
+      axisTick: { show: false },
+    },
+    dataZoom: [
+      {
+        type: 'inside',
+        xAxisIndex: 0,
+        zoomOnMouseWheel: true,
+        moveOnMouseMove: true,
+        preventDefaultMouseMove: false,
+      },
+      {
+        type: 'inside',
+        yAxisIndex: 0,
+        zoomOnMouseWheel: false,
+      },
+    ],
+    series,
+    animationDuration: 600,
+    animationEasing: 'cubicInOut',
+  };
+
+  chart.setOption(option, true);
+}
+
+/* =================================================================
+   Chart: Box & Whisker (aggregated by 15-min window)
+   ================================================================= */
+function renderBoxPlot(data) {
+  const el = document.getElementById('main-chart');
+  if (!chart) {
+    chart = echarts.init(el, null, { renderer: 'canvas' });
+    window.addEventListener('resize', () => chart.resize());
+  }
+
+  const validData = data.filter(d => d.travel_minutes != null);
+  if (!validData.length) {
+    chart.clear();
+    chart.setOption({ title: { text: 'No data', left: 'center', top: 'center', textStyle: { color: '#5a5e72', fontSize: 14 } } });
+    return;
+  }
+
+  // Group data into 15-minute buckets
+  const buckets = {};
+  validData.forEach(d => {
+    // Round down to nearest 15-min window: e.g. 8.23 -> 8.25 bucket at 8:15
+    const totalMinutes = Math.floor(d.hour_decimal * 60);
+    const bucket15 = Math.floor(totalMinutes / 15) * 15; // in minutes from midnight
+    const bucketKey = bucket15;
+    if (!buckets[bucketKey]) buckets[bucketKey] = [];
+    buckets[bucketKey].push(d.travel_minutes);
+  });
+
+  // Sort bucket keys
+  const bucketKeys = Object.keys(buckets).map(Number).sort((a, b) => a - b);
+
+  // Compute box-whisker stats for each bucket
+  // Format: [min, Q1, median, Q3, max]
+  const boxData = [];
+  const outlierData = [];
+  const categories = [];
+
+  bucketKeys.forEach((bk, idx) => {
+    const vals = buckets[bk].sort((a, b) => a - b);
+    const hh = Math.floor(bk / 60);
+    const mm = bk % 60;
+    categories.push(`${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`);
+
+    const q1 = percentile(vals, 25);
+    const median = percentile(vals, 50);
+    const q3 = percentile(vals, 75);
+    const iqr = q3 - q1;
+    const lowerFence = Math.max(vals[0], q1 - 1.5 * iqr);
+    const upperFence = Math.min(vals[vals.length - 1], q3 + 1.5 * iqr);
+
+    boxData.push([lowerFence, q1, median, q3, upperFence]);
+
+    // Outliers
+    vals.forEach(v => {
+      if (v < lowerFence || v > upperFence) {
+        outlierData.push([idx, v]);
+      }
+    });
+  });
+
+  const option = {
+    backgroundColor: 'transparent',
+    tooltip: {
+      trigger: 'item',
+      backgroundColor: 'rgba(26, 26, 46, 0.95)',
+      borderColor: 'rgba(233, 69, 96, 0.3)',
+      borderWidth: 1,
+      textStyle: { color: '#e8e8ef', fontFamily: 'Inter, sans-serif', fontSize: 12 },
+      formatter: function(params) {
+        if (params.seriesType === 'boxplot') {
+          const d = params.data;
+          return `<strong>${params.name}</strong><br/>` +
+                 `Max: ${d[5].toFixed(1)}m<br/>` +
+                 `Q3: ${d[4].toFixed(1)}m<br/>` +
+                 `Median: <strong style="color:#e94560">${d[3].toFixed(1)}m</strong><br/>` +
+                 `Q1: ${d[2].toFixed(1)}m<br/>` +
+                 `Min: ${d[1].toFixed(1)}m<br/>` +
+                 `<span style="color:#8b8fa3;font-size:11px">${buckets[bucketKeys[params.dataIndex]].length} samples</span>`;
+        }
+        return `Outlier: ${params.data[1].toFixed(1)}m`;
+      },
+    },
+    grid: {
+      left: 44,
+      right: 16,
+      top: 20,
+      bottom: 40,
+      containLabel: false,
+    },
+    xAxis: {
+      type: 'category',
+      data: categories,
+      axisLabel: {
+        color: '#5a5e72',
+        fontSize: 10,
+        fontFamily: 'Inter, sans-serif',
+        interval: 0,
+        rotate: categories.length > 12 ? 45 : 0,
+        formatter: (val, idx) => {
+          // Show every label if few, else show only on-the-hour
+          if (categories.length <= 16) return val;
+          return val.endsWith(':00') ? val : '';
+        },
+      },
+      axisLine: { lineStyle: { color: 'rgba(255,255,255,0.06)' } },
+      axisTick: { show: false },
+    },
+    yAxis: {
+      type: 'value',
+      name: 'min',
+      nameTextStyle: { color: '#5a5e72', fontSize: 10, fontFamily: 'Inter, sans-serif', padding: [0, 0, 0, -20] },
+      axisLabel: { color: '#5a5e72', fontSize: 10, fontFamily: 'Inter, sans-serif' },
+      axisLine: { show: false },
+      splitLine: { lineStyle: { color: 'rgba(255,255,255,0.04)' } },
+      axisTick: { show: false },
+    },
+    dataZoom: [
+      {
+        type: 'inside',
+        xAxisIndex: 0,
+      },
+    ],
+    series: [
+      {
+        name: 'Travel Time',
+        type: 'boxplot',
+        data: boxData,
+        itemStyle: {
+          color: 'rgba(15, 52, 96, 0.5)',
+          borderColor: '#4fc3f7',
+          borderWidth: 1.5,
+        },
+        emphasis: {
+          itemStyle: {
+            borderColor: '#e94560',
+            borderWidth: 2,
+            shadowBlur: 10,
+            shadowColor: 'rgba(233, 69, 96, 0.3)',
+          },
+        },
+      },
+      {
+        name: 'Outliers',
+        type: 'scatter',
+        data: outlierData,
+        symbolSize: 6,
+        itemStyle: { color: '#e94560', opacity: 0.7 },
+      },
+    ],
+    animationDuration: 600,
+    animationEasing: 'cubicInOut',
+  };
+
+  chart.setOption(option, true);
+}
+
+// Helper: compute percentile from a sorted array
+function percentile(sortedArr, p) {
+  if (sortedArr.length === 0) return 0;
+  if (sortedArr.length === 1) return sortedArr[0];
+  const idx = (p / 100) * (sortedArr.length - 1);
+  const lower = Math.floor(idx);
+  const upper = Math.ceil(idx);
+  if (lower === upper) return sortedArr[lower];
+  return sortedArr[lower] + (sortedArr[upper] - sortedArr[lower]) * (idx - lower);
+}
+
+/* =================================================================
+   Rendering: Data Table
+   ================================================================= */
+function renderTable(data) {
+  const tbody = document.getElementById('table-body');
+  // Sort by timestamp descending, take the last 50
+  const sorted = [...data].sort((a, b) => b.timestamp.localeCompare(a.timestamp)).slice(0, 50);
+
+  if (!sorted.length) {
+    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:20px">No data</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = sorted.map(d => {
+    const ts = new Date(d.timestamp);
+    const timeStr = ts.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) + ' ' +
+                    ts.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
+    const dur = d.duration_text || '—';
+    const traffic = d.duration_in_traffic_text || '—';
+    const dist = d.distance_km != null ? d.distance_km + ' km' : '—';
+    return `<tr><td>${timeStr}</td><td>${dur}</td><td>${traffic}</td><td>${dist}</td></tr>`;
+  }).join('');
+}
+
+/* =================================================================
+   Filters
+   ================================================================= */
+function applyFilters(data) {
+  let filtered = data;
+
+  // Custom date range filter
+  if (customDateFrom || customDateTo) {
+    filtered = filtered.filter(d => {
+      if (customDateFrom && d.date < customDateFrom) return false;
+      if (customDateTo && d.date > customDateTo) return false;
+      return true;
+    });
+  }
+
+  // Day-of-week filter
+  if (filterDayType === 'weekday') {
+    filtered = filtered.filter(d => d.weekday_num >= 1 && d.weekday_num <= 5);
+  } else if (filterDayType === 'weekend') {
+    filtered = filtered.filter(d => d.weekday_num >= 6);
+  } else if (filterDayType === 'custom') {
+    filtered = filtered.filter(d => customDaysOfWeek.has(d.weekday_num));
+  }
+
+  return filtered;
+}
+
+function setupFilters() {
+  // Days filter
+  document.querySelectorAll('#filter-days .filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#filter-days .filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      // Clear custom date range when using preset
+      customDateFrom = null;
+      customDateTo = null;
+      document.getElementById('date-from').value = '';
+      document.getElementById('date-to').value = '';
+      filterDays = parseInt(btn.dataset.days);
+      loadRouteData(activeRouteId);
+    });
+  });
+
+  // Day type filter
+  document.querySelectorAll('#filter-daytype .filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#filter-daytype .filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      filterDayType = btn.dataset.daytype;
+      refreshView();
+    });
+  });
+
+  // Chart type toggle
+  document.querySelectorAll('#chart-toggle .chart-toggle-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#chart-toggle .chart-toggle-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      chartType = btn.dataset.chart;
+      // Dispose and recreate chart to avoid type conflicts
+      if (chart) {
+        chart.dispose();
+        chart = null;
+      }
+      refreshView();
+    });
+  });
+
+  // Advanced toggle
+  document.getElementById('advanced-toggle').addEventListener('click', function() {
+    this.classList.toggle('open');
+    document.getElementById('advanced-panel').classList.toggle('open');
+  });
+
+  // Custom date range apply
+  document.getElementById('date-apply-btn').addEventListener('click', () => {
+    const from = document.getElementById('date-from').value;
+    const to = document.getElementById('date-to').value;
+    if (!from && !to) return;
+    customDateFrom = from || null;
+    customDateTo = to || null;
+    // Deselect the preset days buttons to indicate custom is active
+    document.querySelectorAll('#filter-days .filter-btn').forEach(b => b.classList.remove('active'));
+    // Fetch all data (no server-side day limit) then filter client-side
+    filterDays = 0;
+    loadRouteData(activeRouteId);
+  });
+
+  // Day-of-week chips
+  document.querySelectorAll('#dow-grid .dow-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      chip.classList.toggle('active');
+      const dow = parseInt(chip.dataset.dow);
+      if (chip.classList.contains('active')) {
+        customDaysOfWeek.add(dow);
+      } else {
+        customDaysOfWeek.delete(dow);
+      }
+      // Switch to custom day type and deselect presets
+      filterDayType = 'custom';
+      document.querySelectorAll('#filter-daytype .filter-btn').forEach(b => b.classList.remove('active'));
+      refreshView();
+    });
+  });
+
+  // Table toggle
+  document.getElementById('table-toggle').addEventListener('click', function() {
+    this.classList.toggle('open');
+    document.getElementById('table-wrapper').classList.toggle('open');
+  });
+}
+
+/* =================================================================
+   Data Flow
+   ================================================================= */
+function refreshView() {
+  const filtered = applyFilters(allData);
+  renderKPIs(filtered);
+  renderChart(filtered);
+  renderTable(filtered);
+
+  // Update subtitle
+  const count = filtered.length;
+  const dates = new Set(filtered.map(d => d.date));
+  document.getElementById('last-updated').textContent =
+    `${count} data points across ${dates.size} day(s)`;
+
+  // Update chart title
+  const route = routes.find(r => r.id === activeRouteId);
+  if (route) {
+    document.getElementById('chart-title').textContent =
+      `Travel Time — ${route.name}`;
+  }
+}
+
+async function loadRouteData(routeId) {
+  activeRouteId = routeId;
+  renderPills();
+
+  try {
+    allData = await fetchData(routeId, filterDays);
+    refreshView();
+  } catch (err) {
+    console.error('Failed to load data:', err);
+    document.getElementById('last-updated').textContent = 'Error loading data';
+  }
+}
+
+function selectRoute(routeId) {
+  if (routeId === activeRouteId) return;
+  loadRouteData(routeId);
+}
+
+/* =================================================================
+   Init
+   ================================================================= */
+async function init() {
+  setupFilters();
+
+  try {
+    routes = await fetchRoutes();
+
+    if (!routes.length) {
+      document.getElementById('route-selector').innerHTML =
+        '<span style="color:var(--text-muted);font-size:0.82rem">No routes configured</span>';
+      document.getElementById('last-updated').textContent = 'No routes found in config';
+      return;
+    }
+
+    activeRouteId = routes[0].id;
+    renderPills();
+    await loadRouteData(activeRouteId);
+  } catch (err) {
+    console.error('Init failed:', err);
+    document.getElementById('last-updated').textContent = 'Failed to connect to API';
+  }
+}
+
+document.addEventListener('DOMContentLoaded', init);
+</script>
+
+</body>
+</html>

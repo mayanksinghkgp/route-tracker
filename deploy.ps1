@@ -41,7 +41,8 @@ param(
     [string]$BucketName = "",
     [string]$Schedule = "",
     [string]$TimeZone = "",
-    [string]$ConfigFile = "config.json"
+    [string]$ConfigFile = "config.json",
+    [string]$DashboardKey = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -131,7 +132,7 @@ gcloud functions deploy $FunctionName `
     --allow-unauthenticated `
     --entry-point track_routes `
     --source . `
-    --set-env-vars "GOOGLE_MAPS_API_KEY=$ApiKey,GCS_BUCKET=$BucketName,CONFIG_FILENAME=config.json" `
+    --set-env-vars "GOOGLE_MAPS_API_KEY=$ApiKey,GCS_BUCKET=$BucketName,CONFIG_FILENAME=config.json,DASHBOARD_KEY=$DashboardKey" `
     --memory 256MB `
     --timeout 60s
 
@@ -159,7 +160,7 @@ gcloud scheduler jobs create http $SchedulerJobName `
     --location $Region `
     --schedule "$Schedule" `
     --uri $FunctionUrl `
-    --http-method GET `
+    --http-method POST `
     --time-zone "$TimeZone" `
     --attempt-deadline 120s
 
@@ -172,10 +173,14 @@ Write-Host "  Deployment Complete!" -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Green
 Write-Host ""
 Write-Host "  Function URL:  $FunctionUrl"
+Write-Host "  Dashboard:     $FunctionUrl" -ForegroundColor Cyan
 Write-Host "  CSV location:  gs://$BucketName/travel_times.csv"
 Write-Host ""
-Write-Host "  Test manually:"
-Write-Host "    curl $FunctionUrl"
+Write-Host "  Test tracking (POST):"
+Write-Host "    curl -X POST $FunctionUrl"
+Write-Host ""
+Write-Host "  Open dashboard (GET):"
+Write-Host "    Open $FunctionUrl in your browser or Android phone"
 Write-Host ""
 Write-Host "  Download logs:"
 Write-Host "    gsutil cp gs://$BucketName/travel_times.csv ."

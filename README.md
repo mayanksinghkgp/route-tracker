@@ -240,6 +240,54 @@ gsutil cp config.json gs://your-bucket-name/config.json
 
 ---
 
+## Mobile Dashboard (PWA)
+
+The Cloud Function includes a built-in mobile dashboard. Open the function URL in any browser (or your Android phone) to see interactive charts of your tracked route data.
+
+### Accessing the Dashboard
+
+1. **Open the Function URL** in your browser:
+   ```
+   https://<region>-<project-id>.cloudfunctions.net/route-tracker
+   ```
+
+2. **Install as an app on Android** — Open in Chrome → tap the three-dot menu → **"Add to Home Screen"** or **"Install app"**. The dashboard launches full-screen without browser chrome.
+
+### Features
+
+- **Route Selector** — Switch between tracked routes.
+- **KPI Cards** — Best departure window, average duration, max traffic delay.
+- **Interactive Chart** — Scatter + line chart of travel time vs. hour of day, colored by date. Pinch-to-zoom and pan on mobile.
+- **Filters** — Last 7/30 days, weekdays vs weekends.
+- **Data Table** — Collapsible table of recent data points.
+
+### Access Control
+
+By default the dashboard is open (no authentication). To add a lightweight access key:
+
+1. Re-deploy with `-DashboardKey`:
+   ```powershell
+   .\deploy.ps1 -ProjectId "my-project" -ApiKey "AIzaSy..." -DashboardKey "my-secret-key"
+   ```
+
+2. Access the dashboard with `?key=my-secret-key` appended to the URL:
+   ```
+   https://<your-function-url>?key=my-secret-key
+   ```
+
+> **Note:** The access key only gates `GET` (dashboard) requests. `POST` (tracking from Cloud Scheduler) is unaffected.
+
+### API Endpoints
+
+| Method | Path | Description |
+|:---|:---|:---|
+| `POST /` | Run tracker (Cloud Scheduler) |
+| `GET /` | Serve the dashboard |
+| `GET /api/data?route_id=...&days=30` | CSV data as JSON |
+| `GET /api/routes` | Route metadata |
+
+---
+
 ## Cost Summary
 
 | Service | Free Tier | Your Usage | Cost |
@@ -272,6 +320,8 @@ route-tracker/
 ├── tracker.py          <- Core logic (API calls, CSV logging, polyline decoder)
 ├── setup_route.py      <- Interactive CLI for route selection
 ├── plot_route.py       <- Plot travel time vs. hour of day
-├── main.py             <- Cloud Function entry point
+├── main.py             <- Cloud Function entry point (tracker + dashboard routing)
+├── dashboard_api.py    <- Dashboard data API (GCS CSV → JSON)
+├── dashboard.html      <- Mobile-first PWA dashboard (self-contained)
 └── deploy.ps1          <- PowerShell deployment script
 ```
