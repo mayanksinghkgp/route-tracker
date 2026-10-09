@@ -375,7 +375,7 @@ body::before {
 }
 
 .advanced-panel.open {
-  max-height: 300px;
+  max-height: 500px;
 }
 
 .advanced-panel__inner {
@@ -484,6 +484,107 @@ body::before {
   background: var(--accent-secondary);
   border-color: rgba(15, 52, 96, 0.8);
   color: #fff;
+}
+
+/* ================================================================
+   Holiday Toggle & Tags
+   ================================================================ */
+.holiday-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.holiday-switch {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 22px;
+  flex-shrink: 0;
+}
+
+.holiday-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.holiday-switch__slider {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background: var(--border-subtle);
+  border-radius: 22px;
+  transition: background var(--transition);
+}
+
+.holiday-switch__slider::before {
+  content: '';
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  left: 3px;
+  bottom: 3px;
+  background: var(--text-secondary);
+  border-radius: 50%;
+  transition: transform var(--transition), background var(--transition);
+}
+
+.holiday-switch input:checked + .holiday-switch__slider {
+  background: var(--accent);
+}
+
+.holiday-switch input:checked + .holiday-switch__slider::before {
+  transform: translateX(18px);
+  background: #fff;
+}
+
+.holiday-switch-label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.holiday-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.holiday-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  background: rgba(233, 69, 96, 0.1);
+  border: 1px solid rgba(233, 69, 96, 0.2);
+  color: var(--text-secondary);
+  font-size: 0.65rem;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: all var(--transition);
+}
+
+.holiday-tag.in-range {
+  background: rgba(233, 69, 96, 0.18);
+  border-color: rgba(233, 69, 96, 0.35);
+  color: var(--accent);
+}
+
+.holiday-tag__dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0.5;
+}
+
+.holiday-tag.in-range .holiday-tag__dot {
+  opacity: 1;
 }
 
 /* ================================================================
@@ -732,6 +833,18 @@ body::before {
           <button class="dow-chip" data-dow="6">Sat</button>
           <button class="dow-chip" data-dow="7">Sun</button>
         </div>
+
+        <div class="advanced-panel__label">Holidays</div>
+        <div class="holiday-row">
+          <label class="holiday-switch">
+            <input type="checkbox" id="holiday-toggle" />
+            <span class="holiday-switch__slider"></span>
+          </label>
+          <label class="holiday-switch-label" for="holiday-toggle">Exclude holidays from data</label>
+        </div>
+        <div class="holiday-tags" id="holiday-tags">
+          <!-- Filled by JS -->
+        </div>
       </div>
     </div>
   </section>
@@ -768,6 +881,7 @@ body::before {
    ================================================================= */
 let allData = [];         // Full dataset from API
 let routes = [];          // Route metadata
+let holidays = [];        // Holiday list from config: [{date, name}]
 let activeRouteId = null;
 let filterDays = 30;      // 0 = all
 let filterDayType = 'all'; // all | weekday | weekend | custom
@@ -775,6 +889,7 @@ let chartType = 'lines';  // lines | boxplot
 let customDateFrom = null; // Date string YYYY-MM-DD or null
 let customDateTo = null;
 let customDaysOfWeek = new Set([2, 3, 4]); // 1=Mon..7=Sun, default Tue/Wed/Thu
+let excludeHolidays = false; // Whether to filter out holiday dates
 
 /* =================================================================
    API Helpers
@@ -806,7 +921,13 @@ function withKey(url) {
 async function fetchRoutes() {
   const resp = await fetch(withKey(apiBase() + '/api/routes'));
   if (!resp.ok) throw new Error('Failed to fetch routes');
-  return resp.json();
+  const data = await resp.json();
+  // API now returns { routes: [...], holidays: [...] }
+  if (Array.isArray(data)) {
+    // Backwards compat: old API returns plain array
+    return { routes: data, holidays: [] };
+  }
+  return data;
 }
 
 async function fetchData(routeId, days) {
@@ -1270,6 +1391,12 @@ function applyFilters(data) {
     filtered = filtered.filter(d => customDaysOfWeek.has(d.weekday_num));
   }
 
+  // Exclude holidays
+  if (excludeHolidays && holidays.length > 0) {
+    const holidayDates = new Set(holidays.map(h => h.date));
+    filtered = filtered.filter(d => !holidayDates.has(d.date));
+  }
+
   return filtered;
 }
 
@@ -1351,6 +1478,12 @@ function setupFilters() {
     });
   });
 
+  // Holiday exclusion toggle
+  document.getElementById('holiday-toggle').addEventListener('change', function() {
+    excludeHolidays = this.checked;
+    refreshView();
+  });
+
   // Table toggle
   document.getElementById('table-toggle').addEventListener('click', function() {
     this.classList.toggle('open');
@@ -1366,12 +1499,14 @@ function refreshView() {
   renderKPIs(filtered);
   renderChart(filtered);
   renderTable(filtered);
+  renderHolidayTags();
 
   // Update subtitle
   const count = filtered.length;
   const dates = new Set(filtered.map(d => d.date));
+  const excludedNote = excludeHolidays && holidays.length ? ' (holidays excluded)' : '';
   document.getElementById('last-updated').textContent =
-    `${count} data points across ${dates.size} day(s)`;
+    `${count} data points across ${dates.size} day(s)${excludedNote}`;
 
   // Update chart title
   const route = routes.find(r => r.id === activeRouteId);
@@ -1402,11 +1537,35 @@ function selectRoute(routeId) {
 /* =================================================================
    Init
    ================================================================= */
+function renderHolidayTags() {
+  const container = document.getElementById('holiday-tags');
+  if (!holidays.length) {
+    container.innerHTML = '<span style="color:var(--text-muted);font-size:0.7rem">No holidays configured</span>';
+    return;
+  }
+
+  // Determine which dates are in the current dataset
+  const datesInData = new Set(allData.map(d => d.date));
+
+  container.innerHTML = holidays.map(h => {
+    const inRange = datesInData.has(h.date);
+    const dt = new Date(h.date + 'T00:00:00');
+    const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const label = `${dt.getDate()} ${monthNames[dt.getMonth()]}`;
+    return `<span class="holiday-tag${inRange ? ' in-range' : ''}" title="${h.date}">
+      <span class="holiday-tag__dot"></span>
+      ${label} — ${h.name}
+    </span>`;
+  }).join('');
+}
+
 async function init() {
   setupFilters();
 
   try {
-    routes = await fetchRoutes();
+    const result = await fetchRoutes();
+    routes = result.routes || [];
+    holidays = result.holidays || [];
 
     if (!routes.length) {
       document.getElementById('route-selector').innerHTML =
@@ -1417,6 +1576,7 @@ async function init() {
 
     activeRouteId = routes[0].id;
     renderPills();
+    renderHolidayTags();
     await loadRouteData(activeRouteId);
   } catch (err) {
     console.error('Init failed:', err);

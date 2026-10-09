@@ -111,16 +111,19 @@ def get_csv_data(
     return rows
 
 
-def get_route_list(bucket_name: str, config_filename: str = "config.json") -> list[dict]:
+def get_route_list(bucket_name: str, config_filename: str = "config.json") -> dict:
     """
-    Reads the route configuration from GCS and returns metadata for each route.
+    Reads the route configuration from GCS and returns metadata for each route,
+    along with the configured holidays list.
 
     Args:
         bucket_name: GCS bucket name.
         config_filename: Config file name in the bucket.
 
     Returns:
-        List of dicts with keys: id, name, origin, destination, active_hours.
+        Dict with keys:
+          - routes: List of dicts with keys: id, name, origin, destination, active_hours.
+          - holidays: List of dicts with keys: date (YYYY-MM-DD), name.
     """
     from google.cloud import storage
 
@@ -129,7 +132,7 @@ def get_route_list(bucket_name: str, config_filename: str = "config.json") -> li
     blob = bucket.blob(config_filename)
 
     if not blob.exists():
-        return []
+        return {"routes": [], "holidays": []}
 
     content = blob.download_as_text(encoding="utf-8")
     config = json.loads(content)
@@ -145,7 +148,9 @@ def get_route_list(bucket_name: str, config_filename: str = "config.json") -> li
             "active_hours": sched.get("active_hours", ""),
         })
 
-    return routes
+    holidays = config.get("holidays", [])
+
+    return {"routes": routes, "holidays": holidays}
 
 
 def _safe_float(value: str) -> float | None:

@@ -191,7 +191,7 @@ def _handle_api_data(request):
 
 
 def _handle_api_routes(request):
-    """Return route metadata from config.json."""
+    """Return route metadata and holidays from config.json."""
     bucket_name = os.environ.get("GCS_BUCKET")
     config_filename = os.environ.get("CONFIG_FILENAME", "config.json")
 
@@ -199,8 +199,8 @@ def _handle_api_routes(request):
         return _json_error("GCS_BUCKET environment variable not set", 500)
 
     try:
-        routes = get_route_list(bucket_name, config_filename)
-        return _json_response(routes)
+        result = get_route_list(bucket_name, config_filename)
+        return _json_response(result)
     except Exception as e:
         return _json_error(f"Failed to read routes: {e}", 500)
 

@@ -16,6 +16,10 @@
       }
     }
   ],
+  "holidays": [
+    { "date": "2026-01-26", "name": "Republic Day" },
+    { "date": "2026-08-15", "name": "Independence Day" }
+  ],
   "gcs_bucket": "",
   "csv_filename": "travel_times.csv",
   "schedule": {
